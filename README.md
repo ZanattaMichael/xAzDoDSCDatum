@@ -43,13 +43,13 @@ This module utilizes Datum from Gael Colas to streamline configuration. For more
 
     ```yaml
     - name: CON Board Administrators
-      preCondition: $ProjectWorkBoardsStatus -eq 'enabled'
+      preCondition: equals (variables 'ProjectWorkBoardsStatus') 'enabled'
       type: AzureDevOpsDscNative/AzDoProjectGroup
       dependsOn:
         - AzureDevOpsDscNative/AzDoProject/Project
       properties:
-        ProjectName: $ProjectName
-        GroupName: $GroupName
+        ProjectName: $(variables('ProjectName'))
+        GroupName: $(variables('GroupName'))
     ```
 
 1. __Modular Pipeline Formatting and Validation Rules__: Incorporate modular scripts stored in the `\Pipeline Rules\` directory into the module build process. These scripts are responsible for validating and formatting configuration resources to meet specific requirements. They can be modified and extended as needed. The current set of scripts includes:
@@ -100,7 +100,7 @@ The pipeline runner provides a set of features applicable to all Desired State C
 
     ```yaml
     - name: CON Board Administrators
-      preCondition: $ProjectWorkBoardsStatus -eq 'enabled'
+      preCondition: equals (variables 'ProjectWorkBoardsStatus') 'enabled'
       type: AzureDevOpsDscNative/AzDoProjectGroup
     ```
 
@@ -140,7 +140,10 @@ The pipeline runner provides a set of features applicable to all Desired State C
   before, or after, the resource's `Test`/`Set` evaluation. Useful for preparing state a
   resource depends on, or for clean-up/state-change logic afterwards. Unlike a condition,
   these are not restricted to a predicate — see `AllowExecutionScripts` below, which gates
-  their use.
+  their use. Unlike `properties`/`preCondition`/`postCondition`, these are not parsed through
+  `ExpandString` or `Assert-SafeConditionExpression` — they run as plain PowerShell, with
+  direct read access to the script-scope variable `Set-Variables` already created for each
+  Datum variable, so there is no need to go through the `variables()` accessor here.
 
     __Example:__
 
@@ -191,6 +194,54 @@ The pipeline runner provides a set of features applicable to all Desired State C
         - AzureDevOpsDscNative/AzDoProject/Project
         - AzureDevOpsDscNative/AzDoProjectGroup/CON Readers
         - AzureDevOpsDscNative/AzDoProjectGroup/CON Board Administrators
+    ```
+
+- __notify__ / __using()__: a Puppet/Chef-style relationship between two resources, combining an
+  ordering guarantee with a data link. `notify` is a string or array of strings on the
+  *notifying* resource, each naming a target resource by the same `Type/Name` identity
+  `dependsOn` uses. It means two things:
+
+    1. **Ordering** — the notifying resource is guaranteed to run before every resource it
+       notifies. This is implemented as an implicit `dependsOn` on the target (folded in before
+       the dependency sort runs), so a `notify` cycle is rejected exactly the way a `dependsOn`
+       cycle already is.
+    2. **Forced re-run** — in `Set` mode, if the notifying resource's own `Test()` reported it
+       was *not* in the desired state, and its `Set()` then completed successfully, every
+       resource it notifies is forced to re-run its own `Set()` this pass, even if that
+       resource's `Test()` reports it is already in the desired state. In `Test` mode there is
+       no `Set()` to force, so `notify` only contributes its ordering guarantee.
+
+    A resource named in another resource's `notify` list may read that resource's `Get()`
+    output with the `using('Type/Name')` accessor, addressed by the same full `Type/Name`
+    identity (not the bare `name` that `reference()` uses). Unlike `reference()`, `using()` is
+    gated: it only succeeds when the resource being read has actually declared the calling
+    resource as a `notify` target — a data dependency is always paired with the ordering
+    guarantee that makes it safe to read. `using()` is callable from anywhere within the
+    notified resource's own expressions (typically `properties`), and, like `reference()`,
+    ordinary PowerShell property-path chaining works on the result.
+
+    `using` is a reserved PowerShell word (the `using module`/`using namespace` directive) when
+    it is the first token of a statement, so `using(...)` must always sit inside an outer
+    expression — never as a bare, unwrapped call. A property value's `$(...)` already provides
+    that wrapping, so the example below (`$((using '...').Id)`) is the pattern to follow; a
+    bare `using 'Type/Name'` with nothing enclosing it fails to parse.
+
+    __Example:__
+
+    ```yaml
+    resources:
+      - name: Project
+        type: AzureDevOpsDscNative/AzDoProject
+        properties:
+          ProjectName: Magenta
+        notify:
+          - AzureDevOpsDscNative/AzDoGitRepository/Default Repository
+
+      - name: Default Repository
+        type: AzureDevOpsDscNative/AzDoGitRepository
+        properties:
+          # Only readable here because 'Project' names this resource in its own notify list.
+          ProjectId: $((using 'AzureDevOpsDscNative/AzDoProject/Project').Id)
     ```
 
 - __parameter tokens__: A resource property whose value is exactly `<params=Name>` is replaced
@@ -260,7 +311,10 @@ In the realm of configuration, there are specialized commands designed to modify
 1. Once the YAML file for the project has been generated, Datum will execute any `[x={ $Node.ProjectPresence }=]` script blocks within the `_variables` property.
 1. The pipeline runner ingests the configuration, loading and interpolating all variables and parameters into memory.
 1. The runner executes the `Pre-Parse` and `Format` rules.
-1. The `Resources` are ordered according to the `dependsOn` property.
+1. Each resource's `notify` property is expanded into an implicit `dependsOn` entry on every
+   resource it names, so the notifying resource is guaranteed to run first.
+1. The `Resources` are ordered according to the `dependsOn` property (including the implicit
+   entries `notify` just added).
 1. The runner iterates through each of the Resources and performs the following steps:
     1. Checks if `Stop-TaskProcessing`/`stopProcessing()` has been called; if so, the resource will be skipped.
     1. Checks for the `preCondition` property (the `condition` key still works, as a
@@ -274,7 +328,7 @@ In the realm of configuration, there are specialized commands designed to modify
 
        ```yaml
        ServiceName: <params=ServiceName>
-       Ensure: $( if ([string]::IsNullOrEmpty($Project_Ensure)) { 'Present' } else { $Project_Ensure } )
+       Ensure: $( if ([string]::IsNullOrEmpty((variables 'Project_Ensure'))) { 'Present' } else { variables 'Project_Ensure' } )
        ```
 
        A token naming an undeclared parameter fails that one resource and is recorded in the run
@@ -285,16 +339,26 @@ In the realm of configuration, there are specialized commands designed to modify
        through the `Target`/`Credential` action hooks.
     1. If present, runs `preExecutionScript` before the engine call (gated by
        `AllowExecutionScripts`).
-    1. Executes the resource through the selected `Engine` action — `Invoke-DscResource` for
-       `DscV2` (the default), `dsc.exe` for `DscV3` — passing the resolved target session
-       when the resource is not running against `Local`.
+    1. Runs the engine's `Test` method. If the resource is already in the desired state **and**
+       it was not forced to refresh by a `notify` from a resource that changed on this pass (see
+       above), it is marked `OK` and Set is skipped. Otherwise, in `Mode -eq 'Set'`, it runs the
+       engine's `Set` method — this covers both genuine drift and a forced-by-notify re-run; in
+       `Test` mode, drift with no forcing possible marks the resource `FAIL` instead.
+       `Invoke-DscResource` drives `DscV2` (the default), `dsc.exe` drives `DscV3` — passing the
+       resolved target session when the resource is not running against `Local`.
     1. If `Set` reports `RebootRequired`: a remote target is restarted (`Restart-Computer
        -Wait`) and the run continues once it is back; a local target fails the resource and
        stops the rest of the file, unless `PipelineRunnerSettings.Reboot: Ignore` is set.
+    1. If this resource's own `Test` originally reported it needed a change (not merely a
+       forced-by-notify re-run) and it completed successfully, every resource named in its
+       `notify` list is marked to be forced through `Set()` on its own turn, once the runner
+       reaches it.
     1. Checks for the `postCondition` property and evaluates it; a `$false` result marks the
        resource `FAIL` regardless of the engine's own outcome.
     1. Upon completion (even in case of an error), the runner checks for the `postExecutionScript` property and invokes the code if present.
-    1. The runner calls the engine's `Get` method on the resource and stores the result in a references table, making it available to subsequent resources via the `reference` function.
+    1. The runner calls the engine's `Get` method on the resource and stores the result in a references table, making it available to subsequent resources via the `reference` function. It is
+       also stored under the resource's full `Type/Name` identity, making it available to any
+       resource this one notifies via the `using()` function.
 
 ## Architecture: Actions
 
@@ -351,6 +415,10 @@ full checkpoint/resume across separate runs.
 [docs/remote-target-credential-handling.md](docs/remote-target-credential-handling.md)
 covers the `Target` and `Credential` action design used for remote-target
 execution and `resourceCredential` resolution.
+[docs/notify-and-using.md](docs/notify-and-using.md) covers the `notify`/`using()`
+resource relationship: the implicit ordering it adds on top of `dependsOn`, the
+forced-refresh semantics in `Set` mode, and the declaration-gated visibility
+`using()` enforces.
 
 ## Public Commands
 

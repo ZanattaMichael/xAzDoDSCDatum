@@ -103,6 +103,14 @@ function Start-DscRunner {
     # that keeps the two in lock-step.
     $script:StopTaskProcessing = $false
 
+    # notify/using(): reset the per-run state that ties notify declarations, Get() output and
+    # forced-refresh requests to this file. Owned by Start-DscRunner the same way
+    # $script:StopTaskProcessing is above.
+    $script:notifyDeclarations = @{}
+    $script:resourceOutputs = @{}
+    $script:pendingNotifyRefresh = @{}
+    $script:currentResourceKey = $null
+
     # #57 §4: sessions opened by a Target action, cached per (TargetAction, ComputerName,
     # CredentialKey) so multiple resources aimed at the same remote target reuse one
     # connection instead of opening a fresh CimSession/PSSession per resource. Closed in the
@@ -243,6 +251,22 @@ function Start-DscRunner {
 
     Write-Verbose "Retrieved default values for parameters and set variables based on pipeline content"
 
+    Write-Information "--> Expanding notify declarations:" -Tags $infoTag
+
+    # notify/using(): fold each resource's `notify` into its target's DependsOn *before* the
+    # dependency sort runs, so the same topological sort (and its cycle detection) also governs
+    # notify-induced ordering. Must run before Sort-DependsOn below.
+    Invoke-CustomTask -Tasks $pipeline.resources -CustomTaskName "Expand-NotifyDependsOn" | Out-Null
+
+    # Build the source-resource-key -> notify-targets map that using() consults to gate access.
+    # Built from the unsorted resources - identity, not order, is what matters here.
+    foreach ($notifySource in $pipeline.resources) {
+        if (-not $notifySource.Notify) { continue }
+        $notifySourceKey = "$($notifySource.type)/$($notifySource.name)"
+        $script:notifyDeclarations[$notifySourceKey] = @($notifySource.Notify | ForEach-Object { $_.Trim() })
+    }
+    Write-Verbose "Built notify declaration map for $($script:notifyDeclarations.Count) resource(s)"
+
     Write-Information "--> Sorting tasks based on dependencies:" -Tags $infoTag
 
     # Sort the tasks based on their dependencies to ensure correct execution order
@@ -281,6 +305,10 @@ function Start-DscRunner {
             $targetAction = $defaultTargetAction
             $session = $null
             $result = $null
+
+            # notify/using(): identify the resource currently being evaluated so using() knows
+            # who is calling it once properties are expanded below.
+            $script:currentResourceKey = $resourceKey
 
             Write-Verbose "Processing resource: [$resourceKey]"
 
@@ -459,8 +487,19 @@ function Start-DscRunner {
                 continue
             }
 
+            # notify/using(): a resource that a genuinely-changed notifier notifies is forced to
+            # re-run Set() this pass even if its own Test() reports it is already in the desired
+            # state (Puppet/Chef notify semantics). $neededChange records the engine's own
+            # verdict before any forcing is applied, since that (not the forced re-run) is what
+            # determines whether this resource's own notify targets should in turn be forced.
+            $neededChange = -not $result.InDesiredState
+            $forcedByNotify = ($Mode -eq "Set") -and $script:pendingNotifyRefresh.Contains($resourceKey)
+            if ($forcedByNotify -and -not $neededChange) {
+                Write-Verbose "Resource forced to re-run Set() by a notify from a changed resource: [$resourceKey]"
+            }
+
             # If not in the desired state and Mode is 'Set', execute the 'Set' method to apply changes
-            if ($result.InDesiredState) {
+            if ($result.InDesiredState -and -not $forcedByNotify) {
                 Write-Verbose "Resource is in the desired state: [$resourceKey]"
                 $resourceStatus = 'OK'
             }
@@ -512,6 +551,16 @@ function Start-DscRunner {
                 Write-Verbose "Change needed, but mode is not set to 'Set': [$resourceKey]"
                 $resourceStatus = 'FAIL'
                 $resourceError = $result.Message
+            }
+
+            # notify/using(): only a genuine change (this resource's own Test() originally
+            # reported drift, not merely a forced-by-notify re-run) that completed successfully
+            # propagates a forced refresh onward to whatever this resource itself notifies.
+            if ($neededChange -and $resourceStatus -eq 'OK' -and $script:notifyDeclarations.Contains($resourceKey)) {
+                foreach ($notifyTarget in $script:notifyDeclarations[$resourceKey]) {
+                    Write-Verbose "Resource [$resourceKey] changed; forcing re-run of notified resource [$notifyTarget]"
+                    $script:pendingNotifyRefresh[$notifyTarget] = $true
+                }
             }
 
             # #57 §2: postCondition runs after Test/Set (before postExecutionScript). Unlike
@@ -577,6 +626,10 @@ function Start-DscRunner {
             # Store the output of the 'Get' operation in a reference table for later use
             $references.Add($task.name, $output_var)
             Write-Verbose "Stored output of 'Get' operation in references table for resource: [$resourceKey]"
+
+            # notify/using(): store the same output keyed by the full "Type/Name" identity, so
+            # using() can read it from a resource this one notifies.
+            $script:resourceOutputs[$resourceKey] = $output_var
 
             # Record the single, deduplicated outcome for this resource and log one line.
             $resourceStopwatch.Stop()

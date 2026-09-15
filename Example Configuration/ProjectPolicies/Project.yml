@@ -21,14 +21,25 @@ resources:
     # would do exactly that. postExecutionScript's own `if ($Project_Ensure -eq 'Absent')` guard
     # avoids that by only ever running in Set mode's teardown branch. Kept as-is rather than
     # replaced, so this example does not reintroduce the failure fixed in f0385eb.
+    # Unlike properties/preCondition/postCondition, postExecutionScript is not parsed through
+    # ExpandString or Assert-SafeConditionExpression - it runs as plain PowerShell
+    # ([scriptblock]::Create + &), so it already has direct read access to the script-scope
+    # $Project_Ensure variable (Set-Variables/SetVariables.ps1 populates both that and
+    # $variables). No need to go through the variables() accessor here.
     postExecutionScript: if ($Project_Ensure -eq 'Absent') { Stop-TaskProcessing }
     properties:
-      projectName: $ProjectName
-      projectDescription: $ProjectDescription
+      # variables('Name') (the runner's own function-language accessor - README.md
+      # "Enhanced Pipeline Runner Resource Features") is the preferred spelling for reading a
+      # Datum-resolved variable inside a $(...) sub-expression, in place of a bare $Name
+      # PowerShell-variable reference: it reads the same value (Set-Variables/SetVariables.ps1
+      # populates both), but keeps property, preCondition and postCondition expressions using
+      # one consistent accessor rather than two different syntaxes for the same lookup.
+      projectName: $(variables('ProjectName'))
+      projectDescription: $(variables('ProjectDescription'))
       visibility: private
       SourceControlType: Git
       ProcessTemplate: Agile
-      Ensure: $( if ([string]::IsNullOrEmpty($Project_Ensure)) { 'Present' } else { $Project_Ensure } )
+      Ensure: $( if ([string]::IsNullOrEmpty((variables 'Project_Ensure'))) { 'Present' } else { variables 'Project_Ensure' } )
 
   - name: Project Services
     type: AzureDevOpsDscNative/AzDoProjectServices
@@ -44,12 +55,12 @@ resources:
     # `equals (variables 'X') 'Y'`, not `equals(X, Y)` (which throws a parameter-binding error).
     postCondition: result().InDesiredState -or (not (equals (variables 'Project_Ensure') 'Present'))
     properties:
-      projectName: $ProjectName
-      GitRepositories: $( if ([string]::IsNullOrEmpty($Project_Service_GitRepositories)) { 'disabled' } else { $Project_Service_GitRepositories } )
-      BuildPipelines: $( if ([string]::IsNullOrEmpty($Project_Service_BuildPipelines)) { 'disabled' } else { $Project_Service_BuildPipelines } )
-      AzureArtifact: $( if ([string]::IsNullOrEmpty($Project_Service_AzureArtifact)) { 'disabled' } else { $Project_Service_AzureArtifact } )
-      WorkBoards: $( if ([string]::IsNullOrEmpty($Project_Service_WorkBoards)) { 'disabled' } else { $Project_Service_WorkBoards } )
-      TestPlans: $( if ([string]::IsNullOrEmpty($Project_Service_TestPlans)) { 'disabled' } else { $Project_Service_TestPlans } )
+      projectName: $(variables('ProjectName'))
+      GitRepositories: $( if ([string]::IsNullOrEmpty((variables 'Project_Service_GitRepositories'))) { 'disabled' } else { variables 'Project_Service_GitRepositories' } )
+      BuildPipelines: $( if ([string]::IsNullOrEmpty((variables 'Project_Service_BuildPipelines'))) { 'disabled' } else { variables 'Project_Service_BuildPipelines' } )
+      AzureArtifact: $( if ([string]::IsNullOrEmpty((variables 'Project_Service_AzureArtifact'))) { 'disabled' } else { variables 'Project_Service_AzureArtifact' } )
+      WorkBoards: $( if ([string]::IsNullOrEmpty((variables 'Project_Service_WorkBoards'))) { 'disabled' } else { variables 'Project_Service_WorkBoards' } )
+      TestPlans: $( if ([string]::IsNullOrEmpty((variables 'Project_Service_TestPlans'))) { 'disabled' } else { variables 'Project_Service_TestPlans' } )
 
 # target / resourceCredential (issue #57 §4/§7) are intentionally NOT demonstrated in this example:
 # every resource here is AzureDevOpsDscNative, which talks to the Azure DevOps REST API in-process

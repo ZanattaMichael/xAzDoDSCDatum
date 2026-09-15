@@ -13,35 +13,35 @@ resources:
       - AzureDevOpsDscNative/AzDoProjectGroup/CON Readers
       - AzureDevOpsDscNative/AzDoProjectGroup/CON Board Administrators
     properties:
-      ProjectName: $ProjectName
-      RepositoryName: $ProjectName
+      ProjectName: $(variables('ProjectName'))
+      RepositoryName: $(variables('ProjectName'))
       isInherited: false
       Permissions:
-        - Identity: '[$ProjectName]\$ProjectGroups_Role_CONReaders'
+        - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONReaders'))"
           Permission:
             Read: "Allow"
-        - Identity: '[$ProjectName]\$ProjectGroups_Role_CONContributors'
+        - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONContributors'))"
           Permission:
             Read: "Allow"
             Contribute: "Allow"
             CreateBranch: "Allow"
-            PullRequestContribute: "Allow"    
-        - Identity: '[$ProjectName]\$ProjectGroups_Role_CONBuildAdministrators'
+            PullRequestContribute: "Allow"
+        - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONBuildAdministrators'))"
           Permission:
             Read: "Allow"
             Contribute: "Allow"
             CreateTag: "Allow"
             ManageNote: "Allow"
             PullRequestContribute: "Allow"
-            EditPolicies: "Allow"   
-        - Identity: '[$ProjectName]\$ProjectGroups_Role_CONReleaseAdministrators'
+            EditPolicies: "Allow"
+        - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONReleaseAdministrators'))"
           Permission:
             Read: "Allow"
             CreateTag: "Allow"
             ManageNote: "Allow"
             EditPolicies: "Allow"
-            PullRequestContribute: "Allow"              
-        - Identity: '[$Organization_Name]\$Organization_Role_ProjectCollectionAdmins'
+            PullRequestContribute: "Allow"
+        - Identity: "[$(variables('Organization_Name'))]\\$(variables('Organization_Role_ProjectCollectionAdmins'))"
           Permission:
             Read: "Allow"
             Contribute: "Allow"

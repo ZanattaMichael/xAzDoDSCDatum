@@ -15,45 +15,45 @@ resources:
   dependsOn: 
     - AzureDevOpsDscNative/AzDoProject/Project
   properties:
-    ProjectName: $ProjectName
-    RepositoryName: $ProjectRepositoryName
+    ProjectName: $(variables('ProjectName'))
+    RepositoryName: $(variables('ProjectRepositoryName'))
 
 - name: Configuration Git Permissions
   type: AzureDevOpsDscNative/AzDoGitPermission
-  dependsOn: 
+  dependsOn:
     - AzureDevOpsDscNative/AzDoGitRepository/Configuration Git Repository
     - AzureDevOpsDscNative/AzDoProjectGroup/CON Readers
     - AzureDevOpsDscNative/AzDoProjectGroup/CON Board Administrators
   properties:
-    ProjectName: $ProjectName
-    RepositoryName: $ProjectRepositoryName
+    ProjectName: $(variables('ProjectName'))
+    RepositoryName: $(variables('ProjectRepositoryName'))
     isInherited: false
     Permissions:
-      - Identity: '[$ProjectName]\$ProjectGroups_Role_CONReaders'
+      - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONReaders'))"
         Permission:
           Read: "Allow"
-      - Identity: '[$ProjectName]\$ProjectGroups_Role_CONContributors'
+      - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONContributors'))"
         Permission:
           Read: "Allow"
           Contribute: "Allow"
           CreateBranch: "Allow"
-          PullRequestContribute: "Allow"    
-      - Identity: '[$ProjectName]\$ProjectGroups_Role_CONReleaseAdministrators'
+          PullRequestContribute: "Allow"
+      - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONReleaseAdministrators'))"
         Permission:
           Read: "Allow"
           CreateTag: "Allow"
           ManageNote: "Allow"
           EditPolicies: "Allow"
           PullRequestContribute: "Allow"
-      - Identity: '[$ProjectName]\$ProjectGroups_Role_CONBuildAdministrators'
+      - Identity: "[$(variables('ProjectName'))]\\$(variables('ProjectGroups_Role_CONBuildAdministrators'))"
         Permission:
           Read: "Allow"
           Contribute: "Allow"
           CreateTag: "Allow"
           ManageNote: "Allow"
           PullRequestContribute: "Allow"
-          EditPolicies: "Allow"     
-      - Identity: '[$Organization_Name]\$Organization_Role_ProjectCollectionAdmins'
+          EditPolicies: "Allow"
+      - Identity: "[$(variables('Organization_Name'))]\\$(variables('Organization_Role_ProjectCollectionAdmins'))"
         Permission:
           Read: "Allow"
           Contribute: "Allow"

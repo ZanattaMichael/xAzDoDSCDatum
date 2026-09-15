@@ -16,8 +16,8 @@ resources:
     dependsOn: 
       - AzureDevOpsDscNative/AzDoProject/Project
     properties:
-      ProjectName: $ProjectName
-      GroupName: $ProjectGroups_Role_CONReaders
+      ProjectName: $(variables('ProjectName'))
+      GroupName: $(variables('ProjectGroups_Role_CONReaders'))
       GroupDescription: The following group provides members with read access to the project and codebase.
 
   - name: CON Board Administrators
@@ -38,7 +38,7 @@ resources:
     dependsOn: 
       - AzureDevOpsDscNative/AzDoProject/Project
     properties:
-      ProjectName: $ProjectName
-      GroupName: $ProjectGroups_Role_CONBoardAdministrators
+      ProjectName: $(variables('ProjectName'))
+      GroupName: $(variables('ProjectGroups_Role_CONBoardAdministrators'))
       GroupDescription: The following group provides members with administrative access to the project boards.
 
